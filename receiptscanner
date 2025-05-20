@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Receipt Scanner</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 600px;
+      margin: auto;
+    }
+    input, button {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      padding: 10px;
+      font-size: 16px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: left;
+    }
+    .loading {
+      color: blue;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Receipt Item Extractor</h2>
+  <input type="file" id="upload" accept="image/*" capture="camera" />
+
+  <div id="output"></div>
+
+  <!-- Tesseract JS -->
+  <script src="https://unpkg.com/tesseract.js @4.0.2/dist/tesseract.min.js"></script>
+  <!-- SheetJS -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js "></script>
+
+  <script>
+    const upload = document.getElementById('upload');
+    const output = document.getElementById('output');
+
+    upload.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      output.innerHTML = '<p class="loading">Processing image...</p>';
+
+      // Step 1: OCR with Tesseract
+      const worker = Tesseract.createWorker({
+        logger: m => console.log(m),
+      });
+      await worker.load();
+      await worker.loadLanguage('eng');
+      await worker.initialize('eng');
+      const { data: { text } } = await worker.recognize(file);
+      await worker.terminate();
+
+      // Step 2: Parse Text into Items
+      const items = parseReceiptText(text);
+
+      // Step 3: Show Results
+      showItems(items);
+
+      // Step 4: Add Download Button
+      addExcelDownload(items);
+    });
+
+    function parseReceiptText(text) {
+      const lines = text.split('\n').filter(Boolean);
+      const items = [];
+
+      const itemRegex = /(.+?)\s+(\d+)\s+([\d\.]+)/i; // Description Qty Cost
+      const altItemRegex = /(.+?)\s+([\d\.]+)/i; // Description Cost (no qty)
+
+      lines.forEach(line => {
+        let match = line.match(itemRegex);
+        if (match) {
+          items.push({
+            description: match[1].trim(),
+            quantity: parseInt(match[2]),
+            unitCost: parseFloat(match[3]),
+            total: parseFloat(match[3]) * parseInt(match[2])
+          });
+        } else {
+          match = line.match(altItemRegex);
+          if (match && !isNaN(parseFloat(match[2]))) {
+            items.push({
+              description: match[1].trim(),
+              quantity: 1,
+              unitCost: parseFloat(match[2]),
+              total: parseFloat(match[2])
+            });
+          }
+        }
+      });
+
+      return items;
+    }
+
+    function showItems(items) {
+      if (items.length === 0) {
+        output.innerHTML += "<p>No items found. Try another receipt.</p>";
+        return;
+      }
+
+      let html = `<table><thead><tr><th>Description</th><th>Quantity</th><th>Unit Cost</th><th>Total</th></tr></thead><tbody>`;
+      items.forEach(item => {
+        html += `<tr>
+          <td>${item.description}</td>
+          <td>${item.quantity}</td>
+          <td>$${item.unitCost.toFixed(2)}</td>
+          <td>$${item.total.toFixed(2)}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      output.innerHTML = html;
+    }
+
+    function addExcelDownload(items) {
+      const wb = XLSX.utils.book_new();
+      const wsData = [["Description", "Quantity", "Unit Cost", "Total"]];
+      items.forEach(item => {
+        wsData.push([item.description, item.quantity, item.unitCost, item.total]);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      XLSX.utils.book_append_sheet(wb, ws, "Receipt");
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'binary' });
+
+      function s2ab(s) {
+        const buf = new ArrayBuffer(s.length);
+        const view = new Uint8Array(buf);
+        for (let i = 0; i < s.length; i++) view[i] = s.charCodeAt(i) & 0xFF;
+        return buf;
+      }
+
+      const blob = new Blob([s2ab(wbout)], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "receipt_items.xlsx";
+      link.textContent = "Download Excel File";
+      link.style.display = "block";
+      link.style.marginTop = "20px";
+      output.appendChild(link);
+    }
+  </script>
+</body>
+</html>
